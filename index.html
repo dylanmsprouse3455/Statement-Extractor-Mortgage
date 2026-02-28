@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>PDF Statement → Dataset (Mortgage)</title>
 
-  <!-- PDF.js -->
+  <!-- PDF.js (single load, no duplicates) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js"></script>
 
   <style>
@@ -103,6 +103,7 @@
     button.primary{ background: rgba(91,92,255,.18); border:1px solid rgba(91,92,255,.35); }
     button.danger{ background: rgba(180,35,24,.10); border:1px solid rgba(180,35,24,.25); }
     button.ghost{ background: rgba(255,255,255,.50); border:1px solid rgba(20,25,35,.10); }
+    button:disabled{ opacity:.6; cursor:not-allowed; }
 
     .pill{
       display:inline-flex;
@@ -206,7 +207,7 @@
   <div class="wrap">
     <div class="title">
       <h1>Upload PDFs → Extract → Dataset</h1>
-      <p>Works best when served over http. Multiple PDFs supported. If something fails, the error will show in the status box.</p>
+      <p>Works best when served over https (GitHub Pages). Multiple PDFs supported. If something fails, the error will show in the status box.</p>
     </div>
 
     <div class="grid">
@@ -238,7 +239,7 @@
         <div class="body">
           <div class="kv" id="latestKV"></div>
           <div style="height:10px"></div>
-          <div class="tiny">Principal delta compares to the last stored Outstanding Principal.</div>
+          <div class="tiny">Principal delta compares to the previous statement by statement date (when available).</div>
         </div>
       </section>
     </div>
@@ -283,346 +284,415 @@
   </div>
 
   <script>
-    // ========= Reliability settings for iOS / local usage =========
-    // Disable worker for better reliability in mobile Safari and file contexts.
-    // If you serve this over http, you can turn this back on later.
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js";
+  document.addEventListener("DOMContentLoaded", () => {
+    const KEY = "mortgage_statement_dataset_v3";
 
-    const STORE_KEY = "mortgage_statement_dataset_v2";
-    const LAST_PRINCIPAL_KEY = "mortgage_last_outstanding_principal_v2";
+    const $ = (id) => document.getElementById(id);
 
-    const pdfFile = document.getElementById("pdfFile");
-    const btnExtract = document.getElementById("btnExtract");
-    const btnExport = document.getElementById("btnExport");
-    const btnClear = document.getElementById("btnClear");
+    const fileInput = $("pdfFile");
+    const btnExtract = $("btnExtract");
+    const btnExport = $("btnExport");
+    const btnClear  = $("btnClear");
 
-    const statusText = document.getElementById("statusText");
-    const statusDetail = document.getElementById("statusDetail");
-    const pageInfo = document.getElementById("pageInfo");
-    const pillState = document.getElementById("pillState");
-    const pillLatest = document.getElementById("pillLatest");
-    const pillCount = document.getElementById("pillCount");
-    const rawTextEl = document.getElementById("rawText");
-    const tbody = document.getElementById("tbody");
-    const latestKV = document.getElementById("latestKV");
+    const statusText = $("statusText");
+    const statusDetail = $("statusDetail");
+    const pageInfo = $("pageInfo");
 
-    function setState(label, msg, detail){
-      pillState.textContent = label;
-      statusText.textContent = msg || "";
+    const pillState = $("pillState");
+    const pillLatest = $("pillLatest");
+    const pillCount = $("pillCount");
+
+    const rawText = $("rawText");
+    const tbody = $("tbody");
+    const latestKV = $("latestKV");
+
+    function setStatus(head, detail) {
+      statusText.textContent = head || "";
       statusDetail.textContent = detail || "";
     }
 
-    function moneyToNumber(str){
-      if(!str) return null;
-      const s = String(str).replace(/[^0-9.\-]/g,"");
-      if(!s) return null;
+    function setPill(el, text) {
+      if (!el) return;
+      el.textContent = text;
+    }
+
+    window.addEventListener("error", (e) => {
+      setStatus("JavaScript error", String(e.message || e.error || e));
+      setPill(pillState, "Error");
+    });
+
+    window.addEventListener("unhandledrejection", (e) => {
+      setStatus("Unhandled promise rejection", String(e.reason || e));
+      setPill(pillState, "Error");
+    });
+
+    function loadDataset() {
+      try { return JSON.parse(localStorage.getItem(KEY) || "[]"); }
+      catch { return []; }
+    }
+
+    function saveDataset(rows) {
+      localStorage.setItem(KEY, JSON.stringify(rows));
+    }
+
+    function moneyToNumber(str) {
+      if (!str) return null;
+      const s = String(str).replace(/[^0-9.\-]/g, "");
+      if (!s) return null;
       const n = Number(s);
       return Number.isFinite(n) ? n : null;
     }
 
-    function formatMoney(n){
-      if(n === null || n === undefined || !Number.isFinite(n)) return "";
+    function fmtMoney(n) {
+      if (n === null || n === undefined || !Number.isFinite(n)) return "";
       return n.toLocaleString(undefined, { style:"currency", currency:"USD" });
     }
 
-    function safeGetDataset(){
-      try{
-        const raw = localStorage.getItem(STORE_KEY);
-        if(!raw) return [];
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr : [];
-      }catch{
-        return [];
-      }
+    function parseMMDDYYYY(s) {
+      const m = String(s || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      if (!m) return null;
+      const mm = Number(m[1]);
+      const dd = Number(m[2]);
+      const yy = Number(m[3]);
+      const d = new Date(yy, mm - 1, dd);
+      return Number.isFinite(d.getTime()) ? d : null;
     }
 
-    function saveDataset(arr){
-      localStorage.setItem(STORE_KEY, JSON.stringify(arr));
-    }
-
-    function getLastOutstandingPrincipal(){
-      const v = localStorage.getItem(LAST_PRINCIPAL_KEY);
-      const n = moneyToNumber(v);
-      return (n !== null) ? n : null;
-    }
-
-    function setLastOutstandingPrincipal(n){
-      if(n === null || n === undefined) return;
-      localStorage.setItem(LAST_PRINCIPAL_KEY, String(n));
-    }
-
-    function classifyDelta(delta){
-      if(delta === null || !Number.isFinite(delta)) return "warn";
-      if(delta < 0) return "good";
-      if(delta > 0) return "bad";
-      return "warn";
-    }
-
-    function extractWithRegex(text, patterns){
-      for(const re of patterns){
+    function extractWithRegex(text, patterns) {
+      for (const re of patterns) {
         const m = text.match(re);
-        if(m){
-          if(m[2]) return String(m[2]).trim();
-          if(m[1]) return String(m[1]).trim();
-        }
+        if (m && (m[1] || m[2])) return String(m[2] || m[1]).trim();
       }
       return "";
     }
 
-    function parseStatementText(text, filename){
-      const normalized = text
+    function normalizeText(text) {
+      return String(text || "")
         .replace(/\u00A0/g, " ")
         .replace(/[ \t]+/g, " ")
         .replace(/\r/g, "")
         .replace(/\n{2,}/g, "\n")
         .trim();
+    }
+
+    function parseStatementText(text, filename) {
+      const normalized = normalizeText(text);
 
       const statementDate = extractWithRegex(normalized, [
-        /Statement Date\s+(\d{2}\/\d{2}\/\d{4})/i
+        /Statement Date\s+(\d{2}\/\d{2}\/\d{4})/i,
+        /Statement\s+Date\s*:\s*(\d{2}\/\d{2}\/\d{4})/i
       ]);
 
       const paymentDueDate = extractWithRegex(normalized, [
-        /Payment Due Date\s+(\d{2}\/\d{2}\/\d{4})/i
+        /Payment Due Date\s+(\d{2}\/\d{2}\/\d{4})/i,
+        /Due Date\s+(\d{2}\/\d{2}\/\d{4})/i
       ]);
 
       const accountNumber = extractWithRegex(normalized, [
-        /Account Number\s+(\d{6,})/i
+        /Account Number\s+(\d{6,})/i,
+        /Account\s*#\s*(\d{6,})/i
       ]);
 
-      const amountDueRaw = extractWithRegex(normalized, [
+      const amountDue = moneyToNumber(extractWithRegex(normalized, [
         /AMOUNT DUE\s+\$?([0-9,]+\.\d{2})/i,
         /Amount Due\s+\$?([0-9,]+\.\d{2})/i
-      ]);
-      const amountDue = moneyToNumber(amountDueRaw);
+      ]));
 
-      const regularPaymentRaw = extractWithRegex(normalized, [
+      const regularPayment = moneyToNumber(extractWithRegex(normalized, [
         /Regular (?:Monthly )?Payment\s+\$?([0-9,]+\.\d{2})/i
-      ]);
-      const regularPayment = moneyToNumber(regularPaymentRaw);
+      ]));
 
-      const principalRaw = extractWithRegex(normalized, [
-        /Principal\s+\$?([0-9,]+\.\d{2})/i
-      ]);
-      const interestRaw = extractWithRegex(normalized, [
-        /Interest\s+\$?([0-9,]+\.\d{2})/i
-      ]);
-      const escrowRaw = extractWithRegex(normalized, [
-        /Escrow(?:\s*\(for Taxes, Insurance\))?\s+\$?([0-9,]+\.\d{2})/i
-      ]);
+      const principal = moneyToNumber(extractWithRegex(normalized, [
+        /\bPrincipal\b\s+\$?([0-9,]+\.\d{2})/i
+      ]));
+      const interest = moneyToNumber(extractWithRegex(normalized, [
+        /\bInterest\b\s+\$?([0-9,]+\.\d{2})/i
+      ]));
+      const escrow = moneyToNumber(extractWithRegex(normalized, [
+        /\bEscrow\b(?:\s*\(for Taxes, Insurance\))?\s+\$?([0-9,]+\.\d{2})/i
+      ]));
 
-      const principal = moneyToNumber(principalRaw);
-      const interest = moneyToNumber(interestRaw);
-      const escrow = moneyToNumber(escrowRaw);
+      const outstandingPrincipal = moneyToNumber(extractWithRegex(normalized, [
+        /Outstanding Principal\*?\s+\$?([0-9,]+\.\d{2})/i,
+        /Principal Balance\*?\s+\$?([0-9,]+\.\d{2})/i
+      ]));
 
-      const outstandingPrincipalRaw = extractWithRegex(normalized, [
-        /Outstanding Principal\*?\s+\$?([0-9,]+\.\d{2})/i
-      ]);
-      const outstandingPrincipal = moneyToNumber(outstandingPrincipalRaw);
+      const id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (String(Date.now()) + "_" + Math.random().toString(16).slice(2));
 
-      const lastOutstanding = getLastOutstandingPrincipal();
-      const principalDelta = (outstandingPrincipal !== null && lastOutstanding !== null)
-        ? (outstandingPrincipal - lastOutstanding)
-        : null;
-
-      const row = {
-        id: (crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2)),
-        parsedAtISO: new Date().toISOString(),
-        sourceFilename: filename || "",
-        accountNumber: accountNumber || "",
-        statementDate: statementDate || "",
-        paymentDueDate: paymentDueDate || "",
-        amountDue,
-        regularPayment,
-        breakdown: { principal, interest, escrow },
-        outstandingPrincipal,
-        principalDelta
+      return {
+        normalized,
+        row: {
+          id,
+          parsedAtISO: new Date().toISOString(),
+          sourceFilename: filename || "",
+          accountNumber,
+          statementDate,
+          paymentDueDate,
+          amountDue,
+          regularPayment,
+          breakdown: { principal, interest, escrow },
+          outstandingPrincipal,
+          principalDelta: null
+        }
       };
-
-      return { row, normalized };
     }
 
-    async function extractPdfText(file){
+    async function extractPdfText(file) {
       const buf = await file.arrayBuffer();
 
-      // no worker mode for reliability
-      const loadingTask = pdfjsLib.getDocument({
+      if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== "function") {
+        throw new Error("PDF.js not loaded. Open the GitHub Pages URL, not a preview.");
+      }
+
+      const pdf = await window.pdfjsLib.getDocument({
         data: buf,
         disableWorker: true
-      });
+      }).promise;
 
-      const pdf = await loadingTask.promise;
-
-      let fullText = "";
-      for(let pageNum = 1; pageNum <= pdf.numPages; pageNum++){
-        const page = await pdf.getPage(pageNum);
+      let full = "";
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
         const content = await page.getTextContent();
         const strings = content.items.map(it => it.str).filter(Boolean);
-        fullText += strings.join(" ") + "\n";
+        full += strings.join(" ") + "\n";
       }
 
-      return { text: fullText, pages: pdf.numPages };
+      return { text: full, pages: pdf.numPages };
     }
 
-    function renderLatest(row){
-      latestKV.innerHTML = "";
+    function recomputeDeltas(rows) {
+      const copy = rows.map(r => ({ ...r, breakdown: { ...(r.breakdown || {}) } }));
 
-      function addKV(label, value, deltaText, deltaClass){
-        const div = document.createElement("div");
-        div.className = "k";
-        div.innerHTML = `
-          <div class="label">${label}</div>
-          <div class="val">
-            <span>${value || ""}</span>
-            ${deltaText ? `<span class="delta ${deltaClass || "warn"}">${deltaText}</span>` : ``}
-          </div>
-        `;
-        latestKV.appendChild(div);
+      copy.sort((a, b) => {
+        const da = parseMMDDYYYY(a.statementDate);
+        const db = parseMMDDYYYY(b.statementDate);
+        const ta = da ? da.getTime() : Number.POSITIVE_INFINITY;
+        const tb = db ? db.getTime() : Number.POSITIVE_INFINITY;
+        if (ta !== tb) return ta - tb;
+        return (a.parsedAtISO || "").localeCompare(b.parsedAtISO || "");
+      });
+
+      let prevOutstanding = null;
+      for (const r of copy) {
+        if (Number.isFinite(r.outstandingPrincipal) && prevOutstanding !== null) {
+          r.principalDelta = r.outstandingPrincipal - prevOutstanding;
+        } else {
+          r.principalDelta = null;
+        }
+        if (Number.isFinite(r.outstandingPrincipal)) {
+          prevOutstanding = r.outstandingPrincipal;
+        }
       }
 
-      addKV("Statement Date", row.statementDate || "");
-      addKV("Payment Due Date", row.paymentDueDate || "");
-      addKV("Amount Due", formatMoney(row.amountDue));
-      addKV("Regular Payment", formatMoney(row.regularPayment));
-      addKV("Principal (due)", formatMoney(row.breakdown?.principal));
-      addKV("Interest (due)", formatMoney(row.breakdown?.interest));
-      addKV("Escrow (due)", formatMoney(row.breakdown?.escrow));
+      // return newest-first for display
+      copy.sort((a, b) => {
+        const da = parseMMDDYYYY(a.statementDate);
+        const db = parseMMDDYYYY(b.statementDate);
+        const ta = da ? da.getTime() : 0;
+        const tb = db ? db.getTime() : 0;
+        if (ta !== tb) return tb - ta;
+        return (b.parsedAtISO || "").localeCompare(a.parsedAtISO || "");
+      });
 
-      const delta = row.principalDelta;
-      const deltaClass = classifyDelta(delta);
-      const deltaLabel = (delta === null) ? "no prior" : `${delta < 0 ? "" : "+"}${formatMoney(delta)}`;
-      addKV("Outstanding Principal", formatMoney(row.outstandingPrincipal), `Δ ${deltaLabel}`, deltaClass);
-
-      addKV("Account #", row.accountNumber || "");
-      addKV("Source", row.sourceFilename || "");
-
-      pillLatest.textContent = row.statementDate ? `Latest: ${row.statementDate}` : "Latest parsed";
+      return copy;
     }
 
-    function renderTable(){
-      const data = safeGetDataset();
+    function deltaBadge(delta) {
+      if (delta === null || !Number.isFinite(delta)) return `<span class="delta warn">n/a</span>`;
+      const abs = Math.abs(delta);
+      const text = (delta > 0 ? "+" : "") + fmtMoney(delta);
+
+      // For principal balance, going down is "good"
+      if (delta < 0) return `<span class="delta good">${text}</span>`;
+      if (abs < 0.005) return `<span class="delta warn">${text}</span>`;
+      return `<span class="delta bad">${text}</span>`;
+    }
+
+    function renderTable(rows) {
       tbody.innerHTML = "";
-
-      for(const row of data){
+      for (const r of rows) {
         const tr = document.createElement("tr");
+
+        const principal = r.breakdown?.principal ?? null;
+        const interest  = r.breakdown?.interest ?? null;
+        const escrow    = r.breakdown?.escrow ?? null;
+
         tr.innerHTML = `
-          <td>${row.statementDate || ""}</td>
-          <td>${row.paymentDueDate || ""}</td>
-          <td>${formatMoney(row.amountDue)}</td>
-          <td>${formatMoney(row.regularPayment)}</td>
-          <td>${formatMoney(row.breakdown?.principal)}</td>
-          <td>${formatMoney(row.breakdown?.interest)}</td>
-          <td>${formatMoney(row.breakdown?.escrow)}</td>
-          <td>${formatMoney(row.outstandingPrincipal)}</td>
-          <td>${row.principalDelta === null ? "" : (row.principalDelta < 0 ? "" : "+") + formatMoney(row.principalDelta)}</td>
-          <td>${row.accountNumber || ""}</td>
-          <td>${row.sourceFilename || ""}</td>
+          <td>${r.statementDate || ""}</td>
+          <td>${r.paymentDueDate || ""}</td>
+          <td>${fmtMoney(r.amountDue)}</td>
+          <td>${fmtMoney(r.regularPayment)}</td>
+          <td>${fmtMoney(principal)}</td>
+          <td>${fmtMoney(interest)}</td>
+          <td>${fmtMoney(escrow)}</td>
+          <td>${fmtMoney(r.outstandingPrincipal)}</td>
+          <td>${deltaBadge(r.principalDelta)}</td>
+          <td>${r.accountNumber || ""}</td>
+          <td>${r.sourceFilename || ""}</td>
         `;
         tbody.appendChild(tr);
       }
-
-      pillCount.textContent = `${data.length} row${data.length === 1 ? "" : "s"}`;
+      setPill(pillCount, `${rows.length} rows`);
     }
 
-    function downloadJson(filename, obj){
-      const blob = new Blob([JSON.stringify(obj, null, 2)], { type:"application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+    function renderLatest(rows) {
+      latestKV.innerHTML = "";
+      if (!rows.length) {
+        setPill(pillLatest, "No data");
+        return;
+      }
+
+      const r = rows[0];
+      setPill(pillLatest, r.statementDate ? `Latest: ${r.statementDate}` : "Latest row");
+
+      const blocks = [
+        ["Statement Date", r.statementDate || ""],
+        ["Payment Due Date", r.paymentDueDate || ""],
+        ["Amount Due", fmtMoney(r.amountDue)],
+        ["Regular Payment", fmtMoney(r.regularPayment)],
+        ["Outstanding Principal", fmtMoney(r.outstandingPrincipal)],
+        ["Principal Delta", ""]
+      ];
+
+      for (const [label, value] of blocks) {
+        const div = document.createElement("div");
+        div.className = "k";
+
+        if (label === "Principal Delta") {
+          div.innerHTML = `
+            <div class="label">${label}</div>
+            <div class="val">
+              <span></span>
+              ${deltaBadge(r.principalDelta)}
+            </div>
+          `;
+        } else {
+          div.innerHTML = `
+            <div class="label">${label}</div>
+            <div class="val">
+              <span>${value}</span>
+              <span></span>
+            </div>
+          `;
+        }
+
+        latestKV.appendChild(div);
+      }
     }
 
-    function summarizeMissing(row){
-      const missing = [];
-      if(!row.statementDate) missing.push("Statement Date");
-      if(!row.paymentDueDate) missing.push("Payment Due Date");
-      if(row.amountDue === null) missing.push("Amount Due");
-      if(row.outstandingPrincipal === null) missing.push("Outstanding Principal");
-      return missing;
+    function rerender() {
+      const rows = recomputeDeltas(loadDataset());
+      renderTable(rows);
+      renderLatest(rows);
     }
 
-    btnExtract.addEventListener("click", async () => {
-      try{
-        const files = Array.from(pdfFile.files || []);
-        if(!files.length){
-          setState("No file", "Pick one or more PDFs first.");
+    async function onExtract() {
+      try {
+        btnExtract.disabled = true;
+        setPill(pillState, "Working");
+        setStatus("Working", "Starting...");
+
+        const files = Array.from(fileInput.files || []);
+        if (!files.length) {
+          setPill(pillState, "Idle");
+          setStatus("No files selected", "Pick one or more PDFs first.");
           return;
         }
 
-        setState("Working", `Processing ${files.length} PDF${files.length === 1 ? "" : "s"}…`, "If this hangs, your browser likely blocked PDF.js scripts. Try serving over http.");
-        btnExtract.disabled = true;
-
-        let lastParsedRow = null;
         let totalPages = 0;
-        let added = 0;
-        const data = safeGetDataset();
+        const newRows = [];
 
-        for(let i = 0; i < files.length; i++){
+        for (let i = 0; i < files.length; i++) {
           const f = files[i];
-          setState("Working", `Extracting: ${f.name}`, `File ${i + 1} of ${files.length}`);
+          setStatus("Extracting text", `${f.name} (${i + 1}/${files.length})`);
 
           const { text, pages } = await extractPdfText(f);
           totalPages += pages;
 
-          const { row, normalized } = parseStatementText(text, f.name);
+          const parsed = parseStatementText(text, f.name);
+          rawText.textContent = parsed.normalized || "(empty)";
 
-          rawTextEl.textContent = normalized || "(empty)";
-          data.push(row);
-          added++;
-          lastParsedRow = row;
-
-          if(row.outstandingPrincipal !== null){
-            setLastOutstandingPrincipal(row.outstandingPrincipal);
+          // If extraction is basically empty, likely scanned PDF
+          if (!parsed.normalized || parsed.normalized.length < 20) {
+            setStatus("Text looks empty", "This PDF might be image-based. PDF.js cannot pull text from images. You would need OCR for scanned statements.");
           }
+
+          newRows.push(parsed.row);
         }
 
-        saveDataset(data);
         pageInfo.textContent = `${totalPages} pages`;
 
-        if(lastParsedRow){
-          renderLatest(lastParsedRow);
-          const missing = summarizeMissing(lastParsedRow);
-          renderTable();
+        const existing = loadDataset();
+        const merged = existing.concat(newRows);
+        const withDeltas = recomputeDeltas(merged);
 
-          if(missing.length){
-            setState("Done (partial)", `Added ${added} row(s). Missing in last PDF: ${missing.join(", ")}`, "Open raw text preview to confirm the label text exists.");
-          }else{
-            setState("Done", `Added ${added} row(s) to dataset.`, "");
-          }
-        }else{
-          setState("Done", `No rows added.`, "");
+        saveDataset(withDeltas);
+        rerender();
+
+        // Report missing key fields in the last processed file
+        const last = newRows[newRows.length - 1];
+        const missing = [];
+        if (!last.statementDate) missing.push("Statement Date");
+        if (!last.paymentDueDate) missing.push("Payment Due Date");
+        if (last.amountDue === null) missing.push("Amount Due");
+        if (last.outstandingPrincipal === null) missing.push("Outstanding Principal");
+
+        if (missing.length) {
+          setPill(pillState, "Done (partial)");
+          setStatus(
+            `Saved ${newRows.length} row(s)`,
+            `Missing in last PDF: ${missing.join(", ")}. Check raw text preview to see the exact wording in your statement.`
+          );
+        } else {
+          setPill(pillState, "Done");
+          setStatus(`Saved ${newRows.length} row(s)`, `Total pages read: ${totalPages}.`);
         }
-      }catch(err){
-        console.error(err);
-        setState("Error", "Click worked, but extraction failed.", String(err && err.message ? err.message : err));
-      }finally{
+
+      } catch (e) {
+        setPill(pillState, "Error");
+        setStatus("Failed", String(e && e.message ? e.message : e));
+      } finally {
         btnExtract.disabled = false;
       }
-    });
+    }
 
-    btnExport.addEventListener("click", () => {
-      const data = safeGetDataset();
-      const stamp = new Date().toISOString().slice(0,10);
-      downloadJson(`mortgage_dataset_${stamp}.json`, data);
-    });
+    function onExport() {
+      const rows = loadDataset();
+      const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
 
-    btnClear.addEventListener("click", () => {
-      localStorage.removeItem(STORE_KEY);
-      localStorage.removeItem(LAST_PRINCIPAL_KEY);
-      rawTextEl.textContent = "(empty)";
-      latestKV.innerHTML = "";
-      pillLatest.textContent = "No data";
-      setState("Cleared", "Stored dataset cleared from this browser.");
-      pillState.textContent = "Idle";
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mortgage_statement_dataset.json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      setStatus("Exported", "Downloaded mortgage_statement_dataset.json");
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
+    function onClear() {
+      const ok = confirm("Clear stored dataset on this device?");
+      if (!ok) return;
+      localStorage.removeItem(KEY);
+      rawText.textContent = "(empty)";
       pageInfo.textContent = "0 pages";
-      renderTable();
-    });
+      setPill(pillState, "Idle");
+      setStatus("Cleared", "Local dataset removed.");
+      rerender();
+    }
 
-    renderTable();
+    // bind once, no duplicates
+    btnExtract.addEventListener("click", onExtract);
+    btnExport.addEventListener("click", onExport);
+    btnClear.addEventListener("click", onClear);
+
+    // initial render
+    rerender();
+    setPill(pillState, "Ready");
+    setStatus("Ready", "Select one or more PDFs, then tap Extract + Parse.");
+  });
   </script>
 </body>
 </html>
