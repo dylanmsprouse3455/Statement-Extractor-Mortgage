@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>PDF Statement → Dataset (Mortgage)</title>
+
+  <!-- PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js"></script>
+
+  <style>
+    :root{
+      --bg1:#fff6fb;
+      --bg2:#f2fbff;
+      --bg3:#f6fff9;
+      --ink:#12131a;
+      --muted:#5d6472;
+      --stroke:rgba(20,25,35,.10);
+      --card:rgba(255,255,255,.82);
+      --card2:rgba(255,255,255,.92);
+      --shadow:0 18px 45px rgba(0,0,0,.10);
+      --shadow2:0 10px 24px rgba(0,0,0,.08);
+      --accent:#5b5cff;
+      --good:#14804a;
+      --bad:#b42318;
+      --warn:#b54708;
+      --r:18px;
+      --pad:16px;
+      --max:980px;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif;
+      color:var(--ink);
+      background:
+        radial-gradient(900px 600px at 15% 10%, rgba(255, 122, 217, .22), transparent 60%),
+        radial-gradient(900px 600px at 85% 12%, rgba(53, 208, 255, .22), transparent 60%),
+        radial-gradient(900px 700px at 40% 92%, rgba(90, 255, 170, .18), transparent 60%),
+        linear-gradient(180deg, var(--bg1), var(--bg2) 45%, var(--bg3));
+      -webkit-font-smoothing:antialiased;
+    }
+
+    .wrap{ max-width:var(--max); margin:0 auto; padding:18px 14px 40px; }
+    .title{
+      padding:14px;
+      border:1px solid var(--stroke);
+      border-radius:var(--r);
+      background:var(--card);
+      box-shadow:var(--shadow2);
+      backdrop-filter: blur(10px);
+    }
+    .title h1{ margin:0; font-size:18px; }
+    .title p{ margin:6px 0 0; color:var(--muted); font-size:13px; line-height:1.35; }
+
+    .grid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:12px; }
+    @media (min-width: 860px){ .grid{ grid-template-columns:1.15fr .85fr; } }
+
+    .card{
+      border:1px solid var(--stroke);
+      border-radius:var(--r);
+      background:var(--card);
+      box-shadow:var(--shadow);
+      backdrop-filter: blur(10px);
+      overflow:hidden;
+    }
+    .top{
+      padding:14px var(--pad);
+      border-bottom:1px solid rgba(20,25,35,.08);
+      background:linear-gradient(180deg, var(--card2), rgba(255,255,255,.70));
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+    }
+    .top h2{ margin:0; font-size:14px; }
+    .body{ padding:14px var(--pad); }
+
+    input[type="file"]{
+      width:100%;
+      padding:12px;
+      border-radius:14px;
+      border:1px dashed rgba(20,25,35,.22);
+      background: rgba(255,255,255,.55);
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    .btnRow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+
+    button{
+      appearance:none;
+      border:none;
+      border-radius:14px;
+      padding:11px 12px;
+      font-weight:650;
+      font-size:14px;
+      background:rgba(91,92,255,.12);
+      color:var(--ink);
+      border:1px solid rgba(91,92,255,.25);
+      cursor:pointer;
+      transition: transform .08s ease, background .15s ease;
+    }
+    button:active{ transform: scale(.98); }
+    button.primary{ background: rgba(91,92,255,.18); border:1px solid rgba(91,92,255,.35); }
+    button.danger{ background: rgba(180,35,24,.10); border:1px solid rgba(180,35,24,.25); }
+    button.ghost{ background: rgba(255,255,255,.50); border:1px solid rgba(20,25,35,.10); }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:7px 10px;
+      border-radius:999px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.60);
+      font-size:12px;
+      color:var(--muted);
+      white-space:nowrap;
+    }
+
+    .status{
+      margin-top:10px;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.55);
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.35;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+
+    .tiny{ font-size:12px; color:var(--muted); line-height:1.35; }
+
+    .kv{ display:grid; grid-template-columns:1fr; gap:10px; }
+    @media (min-width: 560px){ .kv{ grid-template-columns:1fr 1fr; } }
+
+    .k{
+      padding:12px;
+      border-radius:16px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.60);
+    }
+    .label{ font-size:12px; color:var(--muted); margin-bottom:4px; }
+    .val{
+      font-size:16px;
+      font-weight:750;
+      letter-spacing:.2px;
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .delta{
+      font-size:12px;
+      font-weight:700;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.65);
+      color:var(--muted);
+      flex:0 0 auto;
+    }
+    .delta.good{ color:var(--good); border-color:rgba(20,128,74,.25); background:rgba(20,128,74,.10); }
+    .delta.bad{ color:var(--bad); border-color:rgba(180,35,24,.25); background:rgba(180,35,24,.10); }
+    .delta.warn{ color:var(--warn); border-color:rgba(181,71,8,.25); background:rgba(181,71,8,.10); }
+
+    .tableWrap{
+      overflow:auto;
+      border-radius:16px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.55);
+    }
+    table{ width:100%; border-collapse:separate; border-spacing:0; min-width:760px; font-size:13px; }
+    thead th{
+      position:sticky; top:0;
+      background: rgba(255,255,255,.85);
+      border-bottom:1px solid rgba(20,25,35,.10);
+      text-align:left;
+      padding:10px;
+      color:var(--muted);
+      font-weight:700;
+      white-space:nowrap;
+    }
+    tbody td{ padding:10px; border-bottom:1px solid rgba(20,25,35,.06); white-space:nowrap; }
+    tbody tr:last-child td{ border-bottom:none; }
+
+    pre{
+      margin:0;
+      padding:12px;
+      border-radius:16px;
+      border:1px solid rgba(20,25,35,.10);
+      background: rgba(255,255,255,.55);
+      overflow:auto;
+      font-size:12px;
+      line-height:1.35;
+      color:#262833;
+    }
+
+    details summary{ cursor:pointer; font-weight:700; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="title">
+      <h1>Upload PDFs → Extract → Dataset</h1>
+      <p>Works best when served over http. Multiple PDFs supported. If something fails, the error will show in the status box.</p>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <div class="top">
+          <h2>1) Upload + Extract</h2>
+          <span class="pill" id="pillState">Idle</span>
+        </div>
+        <div class="body">
+          <input id="pdfFile" type="file" accept="application/pdf" multiple />
+          <div class="btnRow">
+            <button type="button" class="primary" id="btnExtract">Extract + Parse</button>
+            <button type="button" class="ghost" id="btnExport">Export JSON</button>
+            <button type="button" class="danger" id="btnClear">Clear Stored Data</button>
+          </div>
+          <div class="status" id="statusBox">
+            <div id="statusText">Select one or more PDFs, then tap Extract + Parse.</div>
+            <div class="tiny" id="statusDetail"></div>
+            <div class="pill" id="pageInfo">0 pages</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="top">
+          <h2>2) Latest Parsed Row</h2>
+          <span class="pill" id="pillLatest">No data</span>
+        </div>
+        <div class="body">
+          <div class="kv" id="latestKV"></div>
+          <div style="height:10px"></div>
+          <div class="tiny">Principal delta compares to the last stored Outstanding Principal.</div>
+        </div>
+      </section>
+    </div>
+
+    <div style="height:12px"></div>
+
+    <section class="card">
+      <div class="top">
+        <h2>3) Dataset Table</h2>
+        <span class="pill" id="pillCount">0 rows</span>
+      </div>
+      <div class="body">
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Statement Date</th>
+                <th>Payment Due Date</th>
+                <th>Amount Due</th>
+                <th>Regular Payment</th>
+                <th>Principal</th>
+                <th>Interest</th>
+                <th>Escrow</th>
+                <th>Outstanding Principal</th>
+                <th>Principal Delta</th>
+                <th>Account #</th>
+                <th>Source Filename</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+
+        <div style="height:12px"></div>
+        <details>
+          <summary>Show raw extracted text preview (last PDF)</summary>
+          <div style="height:10px"></div>
+          <pre id="rawText">(empty)</pre>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <script>
+(() => {
+  // ========= HARD UI ERROR SURFACE =========
+  const $ = (id) => document.getElementById(id);
+
+  function ensureStatusUI() {
+    // If your page does not have these, create them automatically.
+    let box = $("statusBox");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "statusBox";
+      box.style.cssText = "margin:12px 0;padding:12px;border-radius:14px;border:1px solid rgba(0,0,0,.12);background:rgba(255,255,255,.75);font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Inter,Arial,sans-serif;font-size:13px;line-height:1.35;";
+      document.body.prepend(box);
+    }
+
+    let t = $("statusText");
+    if (!t) {
+      t = document.createElement("div");
+      t.id = "statusText";
+      t.style.cssText = "font-weight:700;margin-bottom:6px;";
+      box.appendChild(t);
+    }
+
+    let d = $("statusDetail");
+    if (!d) {
+      d = document.createElement("div");
+      d.id = "statusDetail";
+      d.style.cssText = "color:rgba(0,0,0,.65);white-space:pre-wrap;";
+      box.appendChild(d);
+    }
+
+    return { box, t, d };
+  }
+
+  const ui = ensureStatusUI();
+
+  function setStatus(head, detail) {
+    ui.t.textContent = head || "";
+    ui.d.textContent = detail || "";
+  }
+
+  // Capture all errors to the UI so nothing is silent
+  window.addEventListener("error", (e) => {
+    setStatus("JavaScript error", String(e.message || e.error || e));
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    setStatus("Unhandled promise rejection", String(e.reason || e));
+  });
+
+  // ========= FIND OR CREATE REQUIRED ELEMENTS =========
+  function ensureControls() {
+    let fileInput = $("pdfFile");
+    if (!fileInput) {
+      fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.id = "pdfFile";
+      fileInput.accept = "application/pdf";
+      fileInput.multiple = true;
+      fileInput.style.cssText = "width:100%;padding:12px;border-radius:14px;border:1px dashed rgba(0,0,0,.25);background:rgba(255,255,255,.7);margin:10px 0;";
+      document.body.prepend(fileInput);
+    } else {
+      fileInput.multiple = true;
+    }
+
+    let btn = $("btnExtract");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = "btnExtract";
+      btn.type = "button";
+      btn.textContent = "Extract + Parse";
+      btn.style.cssText = "padding:12px 14px;border-radius:14px;border:1px solid rgba(0,0,0,.12);background:rgba(91,92,255,.18);font-weight:800;cursor:pointer;";
+      document.body.prepend(btn);
+    } else {
+      btn.type = "button";
+    }
+
+    let raw = $("rawText");
+    if (!raw) {
+      raw = document.createElement("pre");
+      raw.id = "rawText";
+      raw.textContent = "(raw text will appear here)";
+      raw.style.cssText = "margin-top:12px;padding:12px;border-radius:14px;border:1px solid rgba(0,0,0,.12);background:rgba(255,255,255,.65);white-space:pre-wrap;max-height:240px;overflow:auto;";
+      document.body.appendChild(raw);
+    }
+
+    return { fileInput, btn, raw };
+  }
+
+  const { fileInput, btn, raw } = ensureControls();
+
+  // ========= PDF.JS CHECK =========
+  function assertPdfJsLoaded() {
+    // CDN or local must have created window.pdfjsLib
+    if (!window.pdfjsLib || typeof window.pdfjsLib.getDocument !== "function") {
+      throw new Error(
+        "PDF.js is not loaded. Your button click is firing, but pdfjsLib is missing.\n\nFix options:\n1) If you are online: include the CDN script in <head>:\n   https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js\n\n2) If you are offline: download pdf.min.js + pdf.worker.min.js and load them locally, then set workerSrc to your local file.\n\nIf you want, tell me if you are running this from file:// or a URL, and I will give you the exact local file layout."
+      );
+    }
+  }
+
+  function setPdfWorker() {
+    // Prefer a local worker if you have it, otherwise CDN
+    // You can change this to "./pdf.worker.min.js" if you put it next to your HTML.
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc ||
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js";
+  }
+
+  // ========= TEXT EXTRACTION =========
+  async function extractPdfText(file) {
+    const buf = await file.arrayBuffer();
+
+    // Most reliable: disableWorker true
+    const loadingTask = window.pdfjsLib.getDocument({
+      data: buf,
+      disableWorker: true
+    });
+
+    const pdf = await loadingTask.promise;
+
+    let full = "";
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const strings = content.items.map(it => it.str).filter(Boolean);
+      full += strings.join(" ") + "\n";
+    }
+
+    return { text: full, pages: pdf.numPages };
+  }
+
+  // ========= PARSER (label-based) =========
+  function moneyToNumber(str) {
+    if (!str) return null;
+    const s = String(str).replace(/[^0-9.\-]/g, "");
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function extractWithRegex(text, patterns) {
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m && (m[1] || m[2])) return String(m[2] || m[1]).trim();
+    }
+    return "";
+  }
+
+  function parseStatementText(text, filename) {
+    const normalized = text
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\r/g, "")
+      .replace(/\n{2,}/g, "\n")
+      .trim();
+
+    const statementDate = extractWithRegex(normalized, [
+      /Statement Date\s+(\d{2}\/\d{2}\/\d{4})/i
+    ]);
+
+    const paymentDueDate = extractWithRegex(normalized, [
+      /Payment Due Date\s+(\d{2}\/\d{2}\/\d{4})/i
+    ]);
+
+    const accountNumber = extractWithRegex(normalized, [
+      /Account Number\s+(\d{6,})/i
+    ]);
+
+    const amountDue = moneyToNumber(extractWithRegex(normalized, [
+      /AMOUNT DUE\s+\$?([0-9,]+\.\d{2})/i,
+      /Amount Due\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+
+    const regularPayment = moneyToNumber(extractWithRegex(normalized, [
+      /Regular (?:Monthly )?Payment\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+
+    const principal = moneyToNumber(extractWithRegex(normalized, [
+      /Principal\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+    const interest = moneyToNumber(extractWithRegex(normalized, [
+      /Interest\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+    const escrow = moneyToNumber(extractWithRegex(normalized, [
+      /Escrow(?:\s*\(for Taxes, Insurance\))?\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+
+    const outstandingPrincipal = moneyToNumber(extractWithRegex(normalized, [
+      /Outstanding Principal\*?\s+\$?([0-9,]+\.\d{2})/i
+    ]));
+
+    return {
+      normalized,
+      row: {
+        id: (crypto?.randomUUID ? crypto.randomUUID() : String(Date.now()) + "_" + Math.random().toString(16).slice(2)),
+        parsedAtISO: new Date().toISOString(),
+        sourceFilename: filename || "",
+        accountNumber,
+        statementDate,
+        paymentDueDate,
+        amountDue,
+        regularPayment,
+        breakdown: { principal, interest, escrow },
+        outstandingPrincipal
+      }
+    };
+  }
+
+  // ========= CLICK HANDLER (proves it fires) =========
+  async function onExtractClick() {
+    try {
+      setStatus("Click registered", "Starting extraction...");
+      btn.disabled = true;
+
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) {
+        setStatus("No files selected", "Pick one or more PDFs first.");
+        return;
+      }
+
+      assertPdfJsLoaded();
+      setPdfWorker();
+
+      setStatus("Working", `Processing ${files.length} PDF(s)...`);
+
+      const results = [];
+      let totalPages = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        setStatus("Extracting text", `${f.name} (${i + 1}/${files.length})`);
+
+        const { text, pages } = await extractPdfText(f);
+        totalPages += pages;
+
+        const parsed = parseStatementText(text, f.name);
+        results.push(parsed.row);
+
+        // show raw text from last processed file so you can confirm labels exist
+        raw.textContent = parsed.normalized || "(empty)";
+      }
+
+      // Save dataset
+      const key = "mortgage_statement_dataset_v3";
+      const existing = (() => {
+        try { return JSON.parse(localStorage.getItem(key) || "[]"); }
+        catch { return []; }
+      })();
+
+      const merged = existing.concat(results);
+      localStorage.setItem(key, JSON.stringify(merged));
+
+      // Report missing fields on last row so you know parse issues
+      const last = results[results.length - 1];
+      const missing = [];
+      if (!last.statementDate) missing.push("Statement Date");
+      if (!last.paymentDueDate) missing.push("Payment Due Date");
+      if (last.amountDue === null) missing.push("Amount Due");
+      if (last.outstandingPrincipal === null) missing.push("Outstanding Principal");
+
+      if (missing.length) {
+        setStatus("Done (partial)", `Saved ${results.length} row(s). Total pages read: ${totalPages}. Missing in last PDF: ${missing.join(", ")}.\n\nIf fields are missing, look at the raw text preview. If the words are not there, the PDF is image-based and needs OCR.`);
+      } else {
+        setStatus("Done", `Saved ${results.length} row(s). Total pages read: ${totalPages}. All key fields found in last PDF.`);
+      }
+
+    } catch (err) {
+      setStatus("Failed", String(err && err.message ? err.message : err));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Bind after DOM is ready, no guessing
+  function bind() {
+    // Prove script loaded
+    setStatus("Ready", "Script loaded. Select PDFs, then click Extract + Parse.");
+
+    // Remove any existing listeners by replacing the node (hard reset)
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+    newBtn.addEventListener("click", onExtractClick, { passive: true });
+
+    // Also bind to touchstart to beat iOS oddities
+    newBtn.addEventListener("touchstart", () => {}, { passive: true });
+
+    // Update references
+    window.__extractBtn = newBtn;
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind);
+  } else {
+    bind();
+  }
+})();
+</script>
+</body>
+</html>
